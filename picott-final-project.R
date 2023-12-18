@@ -129,24 +129,49 @@ accuracies_table <- accuracy_data |>
     title = "COMPAS algorithmic predictions from 1000 defendants",
     subtitle = "COMPAS accuracy by defendant race"
   )
-
 accuracies_table
 
 
 #-------------Estimating Equation----------------------
-broward_split <- rsample::initial_split(broward_clean, prop = .8)
-broward_train <- training(broward_split)
-broward_test <- testing(broward_split)
+#Training Data - 80/20 split
+set.seed(438)
+model_results <- list()
 
-form7 <- as.formula("two_year_recid ~ age + sex + juv_misd_count + juv_fel_count + priors_count + charge_id + charge_degree")
-model7 <- glm(form7, data = broward_train, family = binomial)
-summary(model7)
+# train 1000 times on 80/20 test/train split
+for (i in 1:1000) {
+  # Split the data into training and testing sets
+  broward_split <- rsample::initial_split(broward_clean, prop = 0.8)
+  broward_train <- training(broward_split)
+  broward_test <- testing(broward_split)
+  
+  # define 7 feature logistic regression formula
+  form <- as.formula("two_year_recid ~ age + sex + juv_misd_count + juv_fel_count + priors_count + charge_id + charge_degree")
+  model <- glm(form, data = broward_train, family = binomial)
+  
+  # run model on test data
+  predictions <- predict(model, newdata = broward_test, type = "response")
+  accuracy <- mean((predictions > 0.5) == broward_test$two_year_recid)
+  
+  # store model & results
+  model_results[[i]] <- list(model = model, accuracy = accuracy)
+}
+
+# Extract relevant information from the results
+accuracies <- sapply(model_results, function(x) x$accuracy)
+
+# Print the summary of the accuracies
+cat("Mean Testing Accuracy:", mean(accuracies), "\n")
+cat("Standard Deviation of Testing Accuracy:", sd(accuracies), "\n")
+
 
 #Making a table
-tidy_summary <- tidy(model7)
+seven_form <- as.formula("two_year_recid ~ age + sex + juv_misd_count + juv_fel_count + priors_count + charge_id + charge_degree")
+seven_model <- glm(seven_form, data = broward_train, family = binomial)
+
+tidy_summary <- tidy(seven_model)
 tidy_summary
 
-model7_table <- tidy_summary |>
+seven_feat_table <- tidy_summary |>
   gt() |>
   tab_header(
     title = "Seven Feture Logistic Regression Model Summary",
@@ -173,17 +198,10 @@ model7_table <- tidy_summary |>
     columns = vars(statistic, p.value)
   )
 
-model7_table
+#This is our logistic regression model we use to train the data
+seven_feat_table
 
-#Table 2 - Making predictions-----------------
-
-
-
-#ANOVA
-
-#Regression tests 
-
-#LASSO
+#Table 2 - Making classifier/predictions----------------
 
 
 
