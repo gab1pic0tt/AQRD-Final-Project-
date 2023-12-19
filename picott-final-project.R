@@ -1,15 +1,15 @@
+library(modelsummary)
+library(summarytools)
+library(glmnetUtils)
+library(gtsummary)
 library(tidyverse)
 library(rsample)
 library(glmnet)
-library(glmnetUtils)
-library(glue)
-library(gt)
 library(dplyr)
-library(summarytools)
-library(gtsummary)
-library(modelsummary)
-library(pROC)
 library(broom)
+library(glue)
+library(pROC)
+library(gt)
 
 
 #DATA
@@ -22,66 +22,6 @@ broward_clean <- broward_clean |>
   rename(charge_degree = `charge_degree (misd/fel)`) |>
   mutate(sex = ifelse(sex == 0, 'male', 'female'))
 
-#Summary Statistics - Table 1.1
-mean_age <- mean(broward_clean$age)
-mean_juv_fel_count <- mean(broward_clean$juv_fel_count)
-mean_juv_misd_count <- mean(broward_clean$juv_misd_count)
-mean_priors_count <- mean(broward_clean$priors_count)
-mean_COMPAS_score <- mean(broward_clean$compas_decile_score)
-
-sd_age <- sd(broward_clean$age)
-sd_jfc <-sd(broward_clean$juv_fel_count)
-sd_jmc <- sd(broward_clean$juv_misd_count)
-sd_priors <- sd(broward_clean$priors_count)
-sd_COMPAS <- sd(broward_clean$compas_decile_score)
-
-summary_data <- data.frame(
-  Variable = c("Age", "Juv_Fel_Count", "Juv_Misd_Count", "Priors_Count", "COMPAS_Score"),
-  Mean = c(mean_age, mean_juv_fel_count, mean_juv_misd_count, mean_priors_count, mean_COMPAS_score),
-  SD = c(sd_age, sd_jfc, sd_jmc, sd_priors, sd_COMPAS)
-)
-
-num_observations <- length(na.omit(broward_clean$age))
-
-summary_data <- data.frame(
-  Variable = c("Age", "Juvenile Felony Count", "Juvenile Misdemeanor Count", "Priors Count", "COMPAS Score"),
-  Mean = c(mean_age, mean_juv_fel_count, mean_juv_misd_count, mean_priors_count, mean_COMPAS_score),
-  SD = c(sd_age, sd_jfc, sd_jmc, sd_priors, sd_COMPAS),
-  Obs = num_observations
-)
-
-#Final Table
-summary_table_gt <- summary_data |>
-  gt() |>
-  tab_spanner(
-    label = "Statistics",
-    columns = c("Mean", "SD", "Obs")
-  ) |>
-  fmt_number(
-    columns = vars(Mean, SD),
-    decimals = 2
-  ) |>
-  tab_header(
-    title = "Defendant Summary Statistics",
-    subtitle = "for Broward County Dataset"
-  )
-
-summary_table_gt
-
-
-#Replicate Table 1.2 (Accuracy Rates)
-##COMPAS
-accuracy_overall <- broward_clean |>
-  summarise(accuracy_overall = sum(compas_correct) / n())
-
-accuracy_black <- broward_clean |>
-  filter(race == 2)|>
-  summarise(accuracy_black = sum(compas_correct) / n())
-
-accuracy_white <- broward_clean |>
-  filter(race == 1)|>
-  summarise(accuracy_white = sum(compas_correct) / n())
-
 broward_clean <- broward_clean |>
   mutate(race = case_when(
     race == 1 ~ "White",
@@ -92,50 +32,13 @@ broward_clean <- broward_clean |>
     race == 6 ~ "Other"
   ))
 
-accuracies <- broward_clean |>
-  group_by(race)|>
-  summarize(
-    race_accuracy = sum(compas_correct) / n(),
-    false_pos = sum(compas_correct == 0 & compas_guess == 1) / (sum(two_year_recid == 0)),
-    false_neg = sum(compas_correct == 0 & compas_guess == 0) / (sum(two_year_recid == 1))
-  ) |>
-  mutate(
-    accuracy_overall = accuracy_overall$accuracy_overall
-  )|>
-  filter(race %in% c("Black", "White"))
 
-
-#AUC-ROC for Table 1.2
-"NEEDS TO BE DONE WITH PREDICTION"
-
-#Finalizing Table 1.2
-accuracy_data <- data.frame(
-  . = c("Accuracy (overall)", "AUC-ROC (overall)", "Accuracy", "False positive", "False negative"),
-  White = c(accuracies$accuracy_overall[2], NA , accuracies$race_accuracy[2], accuracies$false_pos[2], accuracies$false_neg[2]),
-  Black = c(accuracies$accuracy_overall[1], NA , accuracies$race_accuracy[1], accuracies$false_pos[1], accuracies$false_neg[1])
-)
-
-accuracies_table <- accuracy_data |>
-  gt() |>
-  tab_spanner(
-    label = "Defendant Race",
-    columns = c("White", "Black")
-  ) |>
-  fmt_percent(
-    columns = vars(White, Black),
-    decimals = 1
-  ) |>
-  tab_header(
-    title = "COMPAS algorithmic predictions from 1000 defendants",
-    subtitle = "COMPAS accuracy by defendant race"
-  )
-accuracies_table
-
-
-#-------------Estimating Equation----------------------
+#-------------Estimating Equation with 7 Features----------------------Gabi 12/18
 #Training Data - 80/20 split
 set.seed(438)
 model_results <- list()
+conf_matrix7 <- matrix(0, nrow = 2, ncol = 2)
+
 
 # train 1000 times on 80/20 test/train split
 for (i in 1:1000) {
@@ -144,37 +47,72 @@ for (i in 1:1000) {
   broward_train <- training(broward_split)
   broward_test <- testing(broward_split)
   
-  # define 7 feature logistic regression formula
-  form <- as.formula("two_year_recid ~ age + sex + juv_misd_count + juv_fel_count + priors_count + charge_id + charge_degree")
-  model <- glm(form, data = broward_train, family = binomial)
+  # Define 7 feature logistic regression formula
+  form_7 <- as.formula("two_year_recid ~ age + sex + juv_misd_count + juv_fel_count + priors_count + charge_id + charge_degree")
+  model_7 <- glm(form_7, data = broward_train, family = binomial)
   
-  # run model on test data
-  predictions <- predict(model, newdata = broward_test, type = "response")
-  accuracy <- mean((predictions > 0.5) == broward_test$two_year_recid)
+  # Run model on test data
+  predictions <- predict(model_7, newdata = broward_test, type = "response")
+  predicted_labels <- ifelse(predictions > 0.5, 1, 0)
   
-  # store model & results
-  model_results[[i]] <- list(model = model, accuracy = accuracy)
+  # Calculate confusion matrix
+  conf_matrix_iteration <- table(Actual = broward_test$two_year_recid, Predicted = predicted_labels)
+  
+  # Update overall confusion matrix
+  conf_matrix7 <- conf_matrix7 + conf_matrix_iteration
+  
+  # Store model & results
+  model_results[[i]] <- list(model = model_7, accuracy = mean(predicted_labels == broward_test$two_year_recid))
 }
 
+
+
+
+
 # Extract relevant information from the results
-accuracies <- sapply(model_results, function(x) x$accuracy)
+accuracies_7 <- sapply(model_results, function(x) x$accuracy)
 
 # Print the summary of the accuracies
-cat("Mean Testing Accuracy:", mean(accuracies), "\n")
-cat("Standard Deviation of Testing Accuracy:", sd(accuracies), "\n")
+cat("Mean Testing Accuracy:", mean(accuracies_7), "\n")
+cat("Standard Deviation of Testing Accuracy:", sd(accuracies_7), "\n")
+
+#create dataframe of classification accuracies using confusion matrix
+conf_matrix7
+
+precision_df <- data.frame(
+  Classification = c("Actually No", "Actually Yes"),
+  Predicted_No = c(622216, 298801),
+  Predicted_Yes = c(170569, 351414)
+)
+
+precision_table7 <- precision_df |>
+  gt() |>
+  tab_spanner(
+    label = "7 Feature Classifier Prediction",
+    columns = c("Predicted_No", "Predicted_Yes")
+  ) |>
+  fmt_number(
+    columns = vars(Predicted_No, Predicted_Yes),
+    decimals = 0) |>
+  tab_header(
+    title = "7 Feature Classifier Prediction of Recidivism vs Actual Recidivism",
+    subtitle = "Results from training 1000 times on defendant data with features age, sex juvenile misdemeanor count, juvenile felony count, priors count, charge type, & charge degree"
+  ) 
+
+precision_table7
 
 
-#Making a table
+
+#7 feature logit regression model coefficent table---------------
 seven_form <- as.formula("two_year_recid ~ age + sex + juv_misd_count + juv_fel_count + priors_count + charge_id + charge_degree")
 seven_model <- glm(seven_form, data = broward_train, family = binomial)
 
 tidy_summary <- tidy(seven_model)
-tidy_summary
 
 seven_feat_table <- tidy_summary |>
   gt() |>
   tab_header(
-    title = "Seven Feture Logistic Regression Model Summary",
+    title = "Seven Feature Logistic Regression Model Summary",
     subtitle = "Predictors of Recidivism"
   ) %>%
   fmt_number(
@@ -201,7 +139,108 @@ seven_feat_table <- tidy_summary |>
 #This is our logistic regression model we use to train the data
 seven_feat_table
 
-#Table 2 - Making classifier/predictions----------------
 
 
+
+#-------------Estimating Equation with 2 Features----------------------Gabi 12/18
+#Repeat this process with 2 features, age and prior convictions
+set.seed(438)
+model_results2 <- list()
+conf_matrix2 <- matrix(0, nrow = 2, ncol = 2)
+
+
+# train 1000 times on 80/20 test/train split
+for (i in 1:1000) {
+  # Split the data into training and testing sets
+  broward_split <- rsample::initial_split(broward_clean, prop = 0.8)
+  broward_train <- training(broward_split)
+  broward_test <- testing(broward_split)
+  
+  # Define 7 feature logistic regression formula
+  form_2 <- as.formula("two_year_recid ~ age + priors_count")
+  model_2 <- glm(form_2, data = broward_train, family = binomial)
+  
+  # Run model on test data
+  predictions <- predict(model_2, newdata = broward_test, type = "response")
+  predicted_labels <- ifelse(predictions > 0.5, 1, 0)
+  
+  # Calculate confusion matrix
+  conf_matrix_iteration <- table(Actual = broward_test$two_year_recid, Predicted = predicted_labels)
+  
+  # Update overall confusion matrix
+  conf_matrix2 <- conf_matrix2 + conf_matrix_iteration
+  
+  # Store model & results
+  model_results2[[i]] <- list(model = model_2, accuracy = mean(predicted_labels == broward_test$two_year_recid))
+}
+
+# Extract relevant information from the results
+accuracies_2 <- sapply(model_results2, function(x) x$accuracy)
+
+# Print the summary of the accuracies
+cat("Mean Testing Accuracy:", mean(accuracies_2), "\n")
+cat("Standard Deviation of Testing Accuracy:", sd(accuracies_2), "\n")
+
+#create dataframe of classification accuracies using confusion matrix
+conf_matrix2
+
+precision_df2 <- data.frame(
+  Classification = c("Actually No", "Actually Yes"),
+  Predicted_No = c(639492, 311872),
+  Predicted_Yes = c(153293, 338343)
+)
+
+precision_table2 <- precision_df2 |>
+  gt() |>
+  tab_spanner(
+    label = "2 Feature Classifier Prediction",
+    columns = c("Predicted_No", "Predicted_Yes")
+  ) |>
+  fmt_number(
+    columns = vars(Predicted_No, Predicted_Yes),
+    decimals = 0) |>
+  tab_header(
+    title = "2 Feature Classifier Prediction of Recidivism vs Actual Recidivism",
+    subtitle = "Results from training 1000 times on defendant data with features age & prior count",
+  ) 
+
+precision_table2
+
+
+
+#------------Our 2 feature logit regression model coefficent table----------------GAbi 
+two_form <- as.formula("two_year_recid ~ age + priors_count")
+two_model <- glm(two_form, data = broward_train, family = binomial)
+
+tidy_summary <- tidy(two_model)
+
+two_feat_table <- tidy_summary |>
+  gt() |>
+  tab_header(
+    title = "Two Feature Logistic Regression Model Summary",
+    subtitle = "Predictors of Recidivism"
+  ) %>%
+  fmt_number(
+    columns = vars(estimate, std.error, statistic, p.value),
+    decimals = 3
+  ) %>%
+  fmt_number(
+    columns = vars(estimate),
+    suffixing = TRUE
+  ) %>%
+  fmt_number(
+    columns = vars(p.value),
+    decimals = 4
+  ) %>%
+  tab_spanner(
+    label = "Coefficient",
+    columns = vars(estimate, std.error)
+  ) %>%
+  tab_spanner(
+    label = "Statistical Significance",
+    columns = vars(statistic, p.value)
+  )
+
+#This is our 2 feature logistic regression model we use to train the data
+two_feat_table
 
